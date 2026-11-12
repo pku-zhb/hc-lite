@@ -10,6 +10,7 @@
 *.keystore
 .DS_Store
 *.local.json
+/releases/local/
 
 # Local agent notes; keep a private copy, never commit it.
 /AGENTS.md
