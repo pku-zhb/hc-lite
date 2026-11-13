@@ -1,7 +1,12 @@
-# HyperChange Lite
+# hc-lite
 
 A focused fork of [HyperChanger](https://github.com/ColdP/HyperChanger), maintained
-by [pku-zhb](https://github.com/pku-zhb). Package: `com.zhuhuibin.hyperchange.lite`.
+at [pku-zhb/hc-lite](https://github.com/pku-zhb/hc-lite). Package:
+`com.zhuhuibin.hyperchange.lite`.
+
+Version 0.1.1 adopts the shorter hc-lite name. The package, signing identity,
+preference group and configuration format are preserved for existing upgrades
+and imports. Earlier preview versions and their archived filenames remain historical records.
 
 The retained scope is native soft-glass tuning, notification materials and
 interactions, Control Center corners, volume controls, Personal Assistant widgets

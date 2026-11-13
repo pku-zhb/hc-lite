@@ -7,7 +7,7 @@ if [[ ! -d "$volume" || ! -w "$volume" ]]; then
     echo 'DEV_VOLUME must be an existing, writable directory.' >&2
     exit 1
 fi
-cache="${LITE_DEV_CACHE:-$volume/hyperchange-lite}"
+cache="${LITE_DEV_CACHE:-$volume/hc-lite}"
 # Worktrees can isolate every mutable build output while sharing downloaded tools.
 case "$cache" in
     "$volume/"*) ;;
