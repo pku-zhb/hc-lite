@@ -13,8 +13,9 @@ replacement, camera module, third-party navigation adaptations, OCR, or prebuilt
 native patch library. HMC Duo remains the owner of its lockscreen content.
 See [deferred ownership](design/DEFERRED.md), [recovery boundaries](design/RECOVERY.md)
 and host validation.
-The settings App uses [Miuix](https://github.com/compose-miuix-ui/miuix) with feature
-navigation, grouped controls and contextual previews. See the [App design](design/APP.md).
+The settings App uses [Miuix](https://github.com/compose-miuix-ui/miuix). Material
+editing has one entry with a pinned top preview; notification and volume behavior
+have separate pages. See the [App design](design/APP.md).
 
 Preview 1 had a plugin-discovery startup regression. Preview 2 contains a guarded,
 deferred discovery repair; read the [startup recovery boundary](design/STARTUP_SAFETY.md)
@@ -28,7 +29,7 @@ migration and paired acceptance boundary. The modules do not exchange settings
 or require a shared service.
 
 Preview 4 adds the six original HyperChanger material recipes under
-**柔光玻璃 → 材质预设**, with A/E shortcuts, a material-only trial restore and a
+the material editor's **预设** category, with A/E shortcuts, a material-only trial restore and a
 contrast test background. Native-versus-schematic preview status is explicit;
 existing bound notifications can refresh on first tuning enable without waiting
 for a later OEM update. See [material comparisons](design/MATERIAL_PRESETS.md).

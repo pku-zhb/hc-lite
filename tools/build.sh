@@ -7,7 +7,12 @@ if [[ ! -d "$volume" || ! -w "$volume" ]]; then
     echo 'DEV_VOLUME must be an existing, writable directory.' >&2
     exit 1
 fi
-cache="$volume/hyperchange-lite"
+cache="${LITE_DEV_CACHE:-$volume/hyperchange-lite}"
+# Worktrees can isolate every mutable build output while sharing downloaded tools.
+case "$cache" in
+    "$volume/"*) ;;
+    *) echo 'LITE_DEV_CACHE must be inside DEV_VOLUME.' >&2; exit 1 ;;
+esac
 # Reuse installed tools, without retaining another source tree.
 existing_tools="${DEV_TOOLS_DIR:-$volume/tools}"
 export ANDROID_HOME="${ANDROID_HOME:-$existing_tools/android-sdk}"
