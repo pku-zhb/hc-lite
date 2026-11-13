@@ -42,6 +42,10 @@ previews, and corrected overdamping. Existing values and scopes are preserved.
 See Preview 6 review. The normal-notification sample
 is a local preview, not a guarantee of identical rendering for every OEM scene.
 
+Preview 7 simplifies every feature page to one pinned, automatically focused
+rendered sample and title-only controls. Notification group lifecycle repair is
+included in the same iteration. See Preview 7 review.
+
 ## Build
 
 Requires JDK 21+, Android SDK/build tools 37 and libxposed API 102.
