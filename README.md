@@ -34,6 +34,14 @@ contrast test background. Native-versus-schematic preview status is explicit;
 existing bound notifications can refresh on first tuning enable without waiting
 for a later OEM update. See [material comparisons](design/MATERIAL_PRESETS.md).
 
+
+Preview 6 integrates the unified material editor and a usability/behavior review:
+clearer task sections and dependency hints, smaller slider windows with one-step
+and exact input, thin-volume companion-button handling, accurate disabled-effect
+previews, and corrected overdamping. Existing values and scopes are preserved.
+See Preview 6 review. The normal-notification sample
+is a local preview, not a guarantee of identical rendering for every OEM scene.
+
 ## Build
 
 Requires JDK 21+, Android SDK/build tools 37 and libxposed API 102.
