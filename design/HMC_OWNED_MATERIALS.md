@@ -23,7 +23,13 @@ player-tuned input. Claim does not re-enter material application.
 
 The existing `ViewMaterialEngine` applies Lite's arithmetic once. Owned setters
 never enter the engine's historical baseline, output-array or legacy-blend
-stores. Nested legacy blend writes retain the existing dispatch guard.
+stores. Duo submits the complete fresh palette through the verified native
+`View.setMiBackgroundBlendColors(ArrayList<Point>)` boundary, after its native
+shape/blur-mode setup. Lite selects the complete awake unified palette before
+the native bulk implementation can run its legacy clear/add loop. That loop
+retains the dispatch guard, so opacity is never applied a second time. A native
+AOD per-frame legacy palette retains every color/mode and gets only the existing
+per-color tuning; no partial palette replacement or deferred write is used.
 
 ## Existing material permissions control tuning independently of media
 
@@ -53,7 +59,14 @@ settings/scene event; there is no timer or polling fallback.
 `HmcMaterialPolicyTest` and `HmcOwnedMaterialsTest` cover independent permissions,
 native AOD selection, exact-interface admission, role/owner/version rejection,
 pair claim, owner refresh deduplication, disabled cleanup, reentrant discovery,
-callback retry and positive/negative class-cache resolution. Run in an isolated
+callback retry and positive/negative class-cache resolution.
+`HmcOwnedSetterExecutionTest` executes the production owned-setter dispatcher and
+shared arithmetic, including a simulated native bulk-to-legacy loop. It checks
+complete two-color unification, once-only alpha, raw scalar application, changed
+fresh recipe cleanup while disabled, native AOD bulk/legacy frames, clear recipes,
+exception cleanup and rejection of an unregistered renderer probe inside an
+active media selection. A test-only `Point` value implementation supplies the
+real constructor semantics missing from the SDK's JVM mockable jar. Run in an isolated
 dev cache:
 
 ```sh
