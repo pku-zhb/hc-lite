@@ -168,25 +168,55 @@ internal class ViewMaterialEngine(
         return try { action() } finally { if (previous == null) bypassView.remove() else bypassView.set(previous) }
     }
 
+    internal class HmcWrite(val result: Any?)
+
+    /** Production setter entry, also executable without a ROM hook runtime in host tests. */
+    internal fun dispatchHmcOwnedSetter(view: View, name: String, arguments: () -> Array<Any?>,
+                                       proceed: (Array<Any?>) -> Any?): HmcWrite? {
+        // Claim before all tuning/range/bypass exits. A null recipe/empty palette
+        // is still an owned native clear and must not leave a replayable baseline.
+        val hmc = hmcOwnedMaterials?.claim(view) ?: return null
+        forget(view)
+        val input = arguments()
+        if (bypassView.get() === view || blendDispatch.get() == true) return HmcWrite(proceed(input))
+        val settings = hmcSettingsFor(hmc.state)
+        val awakeUnified = settings.enabled && hmc.state and HmcMaterialProtocol.NATIVE_AOD == 0
+        val output = when (name) {
+            "clearMiBackgroundBlendColor" -> input
+            "addMiBackgroundBlendColor" -> arrayOf(
+                softGlassColorAlpha(input[0] as Int, cardBlendOpacity(settings.enabled, false, settings.backgroundOpacity)), input[1])
+            "setMiGlass" -> {
+                val native = input.firstOrNull() as? FloatArray
+                if (native == null || !hasSoftGlassRecipe(native)) input else
+                    adjustInput(view, name, copyArgs(input), settings,
+                        { if (awakeUnified) hmcUnifiedRecipe(view, hmc.state) else null }, { null })
+            }
+            "setMiBackgroundBlendColors" -> {
+                val native = input.firstOrNull() as? List<*>
+                if (native.isNullOrEmpty()) input else
+                    adjustInput(view, name, copyArgs(input), settings, { null },
+                        { if (awakeUnified) hmcUnifiedBlends(view, hmc.state) else null })
+            }
+            else -> adjustInput(view, name, copyArgs(input), settings,
+                { if (awakeUnified) hmcUnifiedRecipe(view, hmc.state) else null },
+                { if (awakeUnified) hmcUnifiedBlends(view, hmc.state) else null })
+        }
+        // A complete bulk palette is selected before native code starts its
+        // legacy clear/add loop. Nested writes must pass that exact palette once.
+        val blending = name == "setMiBackgroundBlendColors" || name == "setMiSelfBlur"
+        if (blending) blendDispatch.set(true)
+        return try { HmcWrite(proceed(output)) } finally { if (blending) blendDispatch.remove() }
+    }
+
     private fun setter(name: String, vararg types: Class<*>) {
         runCatching {
             val method = View::class.java.getMethod(name, *types)
             runtime.hook(method, "lite-glass:$name") { chain ->
                 val view = chain.thisObject as? View ?: return@hook chain.proceed()
+                dispatchHmcOwnedSetter(view, name, { Array<Any?>(types.size) { chain.getArg(it) } }) {
+                    chain.proceedWith(view, it)
+                }?.let { return@hook it.result }
                 if (bypassView.get() === view) return@hook chain.proceed()
-                // Claim before any tuning/range early return. Duo's final commit
-                // then suppresses its player relay even when our tuning is off.
-                val hmc = hmcOwnedMaterials?.claim(view)
-                if (hmc != null) {
-                    forget(view)
-                    if (blendDispatch.get() == true) return@hook chain.proceed()
-                    val input = Array<Any?>(types.size) { chain.getArg(it) }
-                    val output = adjustPrepared(view, method, input, null, null, false, hmc)
-                    val blending = name == "setMiBackgroundBlendColors" || name == "setMiSelfBlur"
-                    if (blending) blendDispatch.set(true)
-                    return@hook try { chain.proceedWith(view, output) }
-                    finally { if (blending) blendDispatch.remove() }
-                }
                 // A replay invokes a native setter with a saved argument. If the
                 // panel closed in a nested callback, passing that argument through
                 // would itself resurrect the old whole-window blur.
@@ -253,8 +283,7 @@ internal class ViewMaterialEngine(
     }
 
     private fun adjustPrepared(view: View, method: Method, input: Array<Any?>, surface: GlassSurface?,
-                               scene: NotificationScopeSnapshot?, recordOwnership: Boolean,
-                               hmc: HmcOwnedMaterials.Target? = null): Array<Any?> {
+                               scene: NotificationScopeSnapshot?, recordOwnership: Boolean): Array<Any?> {
         val name = method.name
         var baseline = copyArgs(input)
         if (name == "setMiGlass") {
@@ -263,7 +292,7 @@ internal class ViewMaterialEngine(
             // Retire the old source as well, or a later settings refresh can
             // replay glass that the current OEM state no longer has.
             if (original == null || !hasSoftGlassRecipe(original)) {
-                if (hmc == null && refreshing.get() != true) synchronized(baselines) {
+                if (refreshing.get() != true) synchronized(baselines) {
                     baselines.getOrPut(view) { linkedMapOf() }[method] = baseline
                     arrayPairs.remove(view)
                     owned.remove(view)
@@ -271,25 +300,34 @@ internal class ViewMaterialEngine(
                 }
                 return input
             }
-            val previous = if (hmc == null) synchronized(baselines) { arrayPairs[view] } else null
+            val previous = synchronized(baselines) { arrayPairs[view] }
             if (original === previous?.second) baseline = arrayOf(previous.first.copyOf())
         }
-        if (hmc == null && refreshing.get() != true) synchronized(baselines) {
+        if (refreshing.get() != true) synchronized(baselines) {
             if (isBackdrop(view)) backdropGenerations[view] = ShadeScope.generation
             baselines.getOrPut(view) { linkedMapOf() }[method] = baseline
             if (scene != null) scopeTokens[view] = scene.token
             if (name == "setMiBackgroundBlendColors") legacyBlends.remove(view)
         }
-        val settings = if (hmc == null) settingsFor(view) else hmcSettingsFor(hmc.state)
-        val output: Array<Any?> = when (name) {
+        val settings = settingsFor(view)
+        val output = adjustInput(view, name, baseline, settings, { unifiedRecipe(view) }, { unifiedBlends(view) })
+        if (name == "setMiGlass") synchronized(baselines) {
+            val result = output[0] as? FloatArray
+            if (result == null) arrayPairs.remove(view) else arrayPairs[view] = (baseline[0] as FloatArray) to result
+        }
+        if (recordOwnership && !sameArgs(input, output)) synchronized(baselines) { owned[view] = Ownership(view) }
+        return output
+    }
+
+    private fun adjustInput(view: View, name: String, baseline: Array<Any?>, settings: SoftGlassSettings,
+                            recipe: () -> FloatArray?, blends: () -> ArrayList<Point>?): Array<Any?> = when (name) {
             "setMiGlass" -> {
                 val native = baseline[0] as FloatArray
                 // The OEM disables its sampler modes rather than erasing the token.
                 // Preserve it so a later heads-up/theme can reuse its current recipe.
                 if (isBackdrop(view)) arrayOf(native)
                 else {
-                    val selected = (if (hmc == null) unifiedRecipe(view) else
-                        hmcUnifiedRecipe(view, hmc.state))?.takeIf(::hasSoftGlassRecipe) ?: native
+                    val selected = recipe()?.takeIf(::hasSoftGlassRecipe) ?: native
                     arrayOf(if (settings.enabled) tuneSoftGlass(selected, settings, contextBrightness = contextBrightness(view)) else selected)
                 }
             }
@@ -305,8 +343,7 @@ internal class ViewMaterialEngine(
             "setMiBackgroundBlendColors" -> arrayOf(if (isBackdrop(view))
                 shadePoints(baseline[0], if (settings.enabled) settings.backgroundOpacity else 100,
                     WindowBackdropPolicy.transparent(settings))
-                else points((if (hmc == null) unifiedBlends(view) else hmcUnifiedBlends(view, hmc.state))
-                    ?: baseline[0], opacity(view, settings)))
+                else points(blends() ?: baseline[0], opacity(view, settings)))
             "setMiSelfBlur" -> arrayOf(
                 if (settings.enabled) softGlassBlur(baseline[0] as Int, settings.backgroundBlur) else baseline[0],
                 shadePoints(baseline[1], if (settings.enabled) settings.backgroundOpacity else 100,
@@ -315,13 +352,6 @@ internal class ViewMaterialEngine(
             "setBackgroundColor" -> arrayOf(if (settings.enabled) softGlassColorAlpha(baseline[0] as Int, settings.backgroundOpacity) else baseline[0])
             else -> baseline
         }
-        if (hmc == null && name == "setMiGlass") synchronized(baselines) {
-            val result = output[0] as? FloatArray
-            if (result == null) arrayPairs.remove(view) else arrayPairs[view] = (baseline[0] as FloatArray) to result
-        }
-        if (hmc == null && recordOwnership && !sameArgs(input, output)) synchronized(baselines) { owned[view] = Ownership(view) }
-        return output
-    }
 
     // Volume has its own alpha owner. A banner is still a notification card: its
     // sampler tint must consume the same background-opacity control as ordinary rows.
@@ -334,10 +364,9 @@ internal class ViewMaterialEngine(
             addBlend = View::class.java.getMethod("addMiBackgroundBlendColor", Int::class.javaPrimitiveType, Int::class.javaPrimitiveType)
             runtime.hook(clearBlend!!, "lite-glass:legacy-clear") { chain ->
                 val view = chain.thisObject as? View
-                if (view != null && hmcOwnedMaterials?.claim(view) != null) {
-                    forget(view)
-                    return@hook chain.proceed()
-                }
+                if (view != null) dispatchHmcOwnedSetter(view, "clearMiBackgroundBlendColor", { emptyArray() }) {
+                    chain.proceedWith(view, it)
+                }?.let { return@hook it.result }
                 if (view != null && skipBackdropReplay(view)) { forget(view); return@hook null }
                 if (view != null && blendDispatch.get() != true)
                     runCatching { nativeBackdropWrite?.invoke(view, "clearMiBackgroundBlendColor") }
@@ -355,15 +384,9 @@ internal class ViewMaterialEngine(
             }
             runtime.hook(addBlend!!, "lite-glass:legacy-add") { chain ->
                 val view = chain.thisObject as? View ?: return@hook chain.proceed()
-                val hmc = hmcOwnedMaterials?.claim(view)
-                if (hmc != null) {
-                    forget(view)
-                    if (bypassView.get() === view || blendDispatch.get() == true) return@hook chain.proceed()
-                    val settings = hmcSettingsFor(hmc.state)
-                    return@hook chain.proceedWith(view, arrayOf(
-                        softGlassColorAlpha(chain.getArg(0) as Int, cardBlendOpacity(settings.enabled, false, settings.backgroundOpacity)),
-                        chain.getArg(1)))
-                }
+                dispatchHmcOwnedSetter(view, "addMiBackgroundBlendColor", { arrayOf(chain.getArg(0), chain.getArg(1)) }) {
+                    chain.proceedWith(view, it)
+                }?.let { return@hook it.result }
                 if (skipBackdropReplay(view)) { forget(view); return@hook null }
                 val backdropWrite = if (blendDispatch.get() != true)
                     runCatching { nativeBackdropWrite?.invoke(view, "blend-mode:${chain.getArg(1)}") }.getOrNull() else null
