@@ -5,7 +5,12 @@ interface, protocol version 1, a registered single glass/blur role, a valid glas
 owner and a successful synchronous pair claim. Interface lookup uses `ClassValue`
 and boot-loader method signatures. It never loads another module, installs a
 class-loading callback, polls for a provider or changes the general module-view
-exclusion rules. Missing/old contracts and unregistered instances remain excluded.
+exclusion rules beyond the exact protocol interface. That membership is cached
+separately from ABI validation and excludes generic surface/media fallback even
+when R8 removes the module namespace, the interface has an old ABI with no methods,
+or the instance is an unregistered probe. Registered pairs are admitted by the
+earlier owned-setter path. Missing/old contracts and unregistered instances never
+gain generic tuning permission.
 
 The ABI has `int hmcMaterialContractVersion()`, `int hmcMaterialState()`,
 `View hmcMaterialOwner()`, `boolean hmcMaterialClaim(int)` and
@@ -66,7 +71,10 @@ complete two-color unification, once-only alpha, raw scalar application, changed
 fresh recipe cleanup while disabled, native AOD bulk/legacy frames, clear recipes,
 exception cleanup and rejection of an unregistered renderer probe inside an
 active media selection. A test-only `Point` value implementation supplies the
-real constructor semantics missing from the SDK's JVM mockable jar. Run in an isolated
+real constructor semantics missing from the SDK's JVM mockable jar.
+`HmcMaterialMembershipTest` checks short-name unregistered/old targets, a separately
+loaded exact marker without ABI methods, and unchanged native admission for an
+unrelated short-name view. Run in an isolated
 dev cache:
 
 ```sh

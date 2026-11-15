@@ -8,3 +8,6 @@
 -keepclassmembers class com.zhuhuibin.hyperchange.lite.glass.HmcMaterialAccessors$* extends java.lang.ClassValue {
     *** computeValue(java.lang.Class);
 }
+-keepclassmembers class com.zhuhuibin.hyperchange.lite.glass.HmcMaterialMembership$* extends java.lang.ClassValue {
+    *** computeValue(java.lang.Class);
+}
