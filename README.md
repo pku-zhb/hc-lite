@@ -4,6 +4,14 @@ A focused fork of [HyperChanger](https://github.com/ColdP/HyperChanger), maintai
 at [pku-zhb/hc-lite](https://github.com/pku-zhb/hc-lite). Package:
 `com.zhuhuibin.hyperchange.lite`.
 
+Version 0.1.11 preserves the OEM's currently selected media material. Normal
+material unification no longer replays a complete awake effect over FullAod or
+native transition writes. Only a confirmed settled-awake media transaction can
+substitute normal inputs; nested initialization inherits its outer selection.
+See [the media-selection contract](design/MEDIA_MATERIAL_SELECTION.md). Fresh
+paired phone recordings remain required; native shortcut behavior is not covered
+by the notification/media classifier.
+
 Version 0.1.10 adds the default-off **横幅通知可读性优化（实验性功能）** switch.
 It requests brief, bounded native compositor brightness samples behind the
 visible banner and adapts standard title/body text with separate roles and
