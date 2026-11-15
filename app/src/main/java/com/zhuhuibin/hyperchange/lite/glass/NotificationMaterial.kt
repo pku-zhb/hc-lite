@@ -23,6 +23,7 @@ internal class NotificationMaterial(
     private data class Recipe(val configuration: Int, val values: FloatArray)
     private val recipes = WeakHashMap<Resources, Recipe>()
     private val applying = ThreadLocal<Boolean>()
+    private val mediaSelection = MediaMaterialSelection<View, Context>()
     private val knownRoots = WeakHashMap<View, NotificationScopeToken>()
     private val forcedRoots = WeakHashMap<View, MaterialOwnership>()
     private val convertedHeadsUpRoots = WeakHashMap<View, MaterialOwnership>()
@@ -60,6 +61,10 @@ internal class NotificationMaterial(
         (GlassSurfaces.media(view) || GlassSurfaces.focus(view) ||
             native.root(view)?.let { native.lockscreenGlassEffect(it) != null } == true)
 
+    /** Configuration remains active for refresh; only one current OEM transaction owns inputs. */
+    private fun mediaInput(view: View): MediaMaterialSelection.Frame<View, Context>? =
+        native.root(view)?.let(mediaSelection::selection)?.takeIf { it.eligible }
+
     private fun active(view: View): Boolean = !GlassSurfaces.excluded(view) && permitted(view) &&
         (tuning() || shouldUnify(view))
 
@@ -67,6 +72,7 @@ internal class NotificationMaterial(
         GlassSurfaces.row(view) != null
 
     fun normalRecipe(view: View): FloatArray? {
+        if (GlassSurfaces.media(view)) return mediaInput(view)?.let { normalRecipe(it.context) }
         if (!ordinaryRow(view)) return normalRecipe(view.context)
         val root = native.root(view) ?: return null
         val context = native.lockscreenMaterialContext(root) ?: return null
@@ -93,7 +99,9 @@ internal class NotificationMaterial(
     fun normalBlends(view: View): ArrayList<Point>? {
         if (!shouldUnify(view)) return null
         return runCatching {
-            val resources = if (ordinaryRow(view)) {
+            val resources = if (GlassSurfaces.media(view)) {
+                mediaInput(view)?.context?.resources ?: return@runCatching null
+            } else if (ordinaryRow(view)) {
                 val root = native.root(view) ?: return@runCatching null
                 native.lockscreenMaterialContext(root)?.resources ?: return@runCatching null
             } else view.context.createPackageContext("com.android.systemui", 0).resources
@@ -119,18 +127,27 @@ internal class NotificationMaterial(
             val method = type.declaredMethods.firstOrNull { it.name == "apply" && it.parameterCount == 2 && Context::class.java.isAssignableFrom(it.parameterTypes[1]) } ?: return@forEach
             runtime.hook(method, "lite-glass:effect:$name") { chain ->
                 val root = chain.getArg(0) as? View
+                val isMedia = name in media
                 // Mark before the OEM calls its setters: a detached FrameLayout is still
                 // media, and must not temporarily inherit ordinary-notification permission.
-                if (root != null && name in media) GlassSurfaces.markMediaRoot(root)
+                if (root != null && isMedia) GlassSurfaces.markMediaRoot(root)
                 if (root != null) NotificationMaterialWrites.observe(root, permitted(root))
-                val result = chain.proceed()
-                if (root == null || applying.get() == true) return@hook result
-                synchronized(knownRoots) { knownRoots[root] = NotificationScope.token(root) }
-                if (shouldUnify(root)) {
-                    applyNormal(root, loader, name in media)
-                    enqueue(root, { shouldUnify(root) }) { applyNormal(root, loader, name in media) }
-                } else synchronized(forcedRoots) { forcedRoots.remove(root) }
-                result
+                val context = chain.getArg(1) as? Context
+                val selection = if (root != null && isMedia && context != null)
+                    mediaSelection.enter(root, name, context) { shouldUnify(root) && native.mediaMayUnify(root, name) } else null
+                try {
+                    val result = chain.proceed()
+                    if (root == null || applying.get() == true || selection?.outermost == false) return@hook result
+                    synchronized(knownRoots) { knownRoots[root] = NotificationScope.token(root) }
+                    // Media setters already adjust the current selected effect's inputs. An
+                    // awake normal effect replay would replace FullAod, its nested Blur setup,
+                    // or a newer scene after this callback returns. Refreshes use native.refresh.
+                    if (!isMedia && shouldUnify(root)) {
+                        applyNormal(root, loader)
+                        enqueue(root, { shouldUnify(root) }) { applyNormal(root, loader) }
+                    } else synchronized(forcedRoots) { forcedRoots.remove(root) }
+                    result
+                } finally { if (selection != null) mediaSelection.leave(selection) }
             }
             found++
         }
@@ -139,7 +156,7 @@ internal class NotificationMaterial(
             runtime.hook(method, "lite-glass:full-aod-$index") { chain ->
                 val result = chain.proceed()
                 val view = field(chain.thisObject, "view") as? View
-                if (view != null && shouldUnify(view)) applyNormal(view, loader, false)
+                if (view != null && shouldUnify(view)) applyNormal(view, loader)
                 result
             }
         }
@@ -428,16 +445,15 @@ internal class NotificationMaterial(
         if (!view.post(job)) synchronized(pending) { if (pending[view]?.job === job) pending.remove(view) }
     }
 
-    private fun applyNormal(view: View, loader: ClassLoader, media: Boolean) {
+    private fun applyNormal(view: View, loader: ClassLoader) {
         // Ordinary keyguard unification changes setter inputs only. Its native
         // keyguard effect continues to own lifecycle, sampling and AOD selection.
-        if (applying.get() == true || !shouldUnify(view) || ordinaryRow(view)) return
+        if (applying.get() == true || GlassSurfaces.media(view) || !shouldUnify(view) || ordinaryRow(view)) return
         val ticket = generation.value
         val scene = NotificationScope.token(view)
         applying.set(true)
         try {
-            val name = if (media) "MediaViewGlassEffect" else "NotificationRowGlassEffect"
-            val type = loader.loadClass(effectPrefix + name)
+            val type = loader.loadClass(effectPrefix + "NotificationRowGlassEffect")
             val singleton = type.declaredFields.firstOrNull { it.name == "INSTANCE" }?.apply { isAccessible = true }?.get(null) ?: return
             val apply = type.methods.firstOrNull { it.name == "apply" && it.parameterCount == 2 } ?: return
             if (!generation.current(ticket, NotificationScope.isCurrent(view, scene) && shouldUnify(view))) return
