@@ -77,7 +77,8 @@ internal object GlassSurfaces {
     /** Unknown or module-owned views fail closed even inside a vendor material call. */
     private fun excludedNow(view: View): Boolean = lineage(view).any { candidate ->
         val name = candidate.javaClass.name
-        name.startsWith("com.zhuhuibin.") || name.startsWith("btm.m.") ||
+        HmcMaterialMembership.contains(candidate.javaClass) ||
+            name.startsWith("com.zhuhuibin.") || name.startsWith("btm.m.") ||
             name.contains("dynamicisland", true) || name.contains("mediaisland", true) ||
             name.contains("TimeView") || name.contains("clock", true) ||
             name.contains("MiuiKeyguardClock") || name.contains("NumPadKey") ||

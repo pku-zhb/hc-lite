@@ -32,9 +32,19 @@ internal data class HmcMaterialPolicy(val glass: Boolean, val notifications: Boo
     fun unify(state: Int): Boolean = tune(state) && unify && state and HmcMaterialProtocol.NATIVE_AOD == 0
 }
 
+/** Membership excludes generic fallback even for an old/empty ABI or an unregistered probe. */
+internal object HmcMaterialMembership {
+    private class Match(val contract: Class<*>?)
+    private val classes = object : ClassValue<Match>() {
+        override fun computeValue(type: Class<*>): Match = Match(hmcMaterialInterface(type))
+    }
+    fun contract(type: Class<*>): Class<*>? = classes.get(type).contract
+    fun contains(type: Class<*>): Boolean = contract(type) != null
+}
+
 /** Accessors are attached to their defining class/loader; missing contracts are cached too. */
 internal class HmcMaterialAccessors(
-    private val find: (Class<*>) -> Class<*>? = ::hmcMaterialInterface,
+    private val find: (Class<*>) -> Class<*>? = HmcMaterialMembership::contract,
 ) {
     internal class Access(val version: Method, val state: Method, val owner: Method,
                           val claim: Method, val reapply: Method)

@@ -10,6 +10,7 @@ import io.github.libxposed.api.XposedModule
 import java.lang.reflect.Proxy
 import org.junit.Assert.*
 import org.junit.Test
+import z71
 
 /** Executes the same dispatcher and arithmetic that production View hooks call. */
 class HmcOwnedSetterExecutionTest {
@@ -214,7 +215,7 @@ class HmcOwnedSetterExecutionTest {
 
     @Test fun anUnregisteredRendererProbeRemainsExcludedInsideAnActiveMediaSelection() {
         val h = Harness()
-        val probe = Target(0)
+        val probe = z71()
         val media = MediaMaterialSelection<View, Any>()
         val frame = media.enter(probe, "MediaViewGlassEffect", Any()) { true }
         try {
