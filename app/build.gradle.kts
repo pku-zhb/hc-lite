@@ -19,8 +19,8 @@ android {
         applicationId = "com.zhuhuibin.hyperchange.lite"
         minSdk = 35
         targetSdk = 37
-        versionCode = 111000
-        versionName = "0.1.11"
+        versionCode = 112000
+        versionName = "0.1.12"
         manifestPlaceholders["liteSourceRevision"] = liteSourceRevision
     }
     buildTypes {
