@@ -120,6 +120,17 @@ internal class NativeMaterialRebind(private val runtime: HookRuntime,
 
     fun root(view: View): View? = if (GlassSurfaces.media(view)) GlassSurfaces.materialRoot(view) else GlassSurfaces.row(view)
 
+    /** Use the same live controller state as the media selector; unknown state stays native. */
+    fun mediaMayUnify(view: View, effect: String?): Boolean {
+        val awake = NotificationScope.confirmedLitKeyguard() || NotificationScope.confirmedUnlocked()
+        if (!awake) return false
+        val root = root(view) ?: return false
+        val interactor = synchronized(mediaInteractors) { mediaInteractors[root]?.get() } ?: return false
+        val aod = field(interactor, "notifiFullAodController") ?: return false
+        return MediaMaterialPolicy.mayUnify(awake, field(aod, "mWillDoAodAnim") as? Boolean,
+            call(interactor, "shouldApplyFullAodEffect") as? Boolean, effect)
+    }
+
     /** Bindings exist even when tuning was disabled and no setter baseline was kept. */
     fun roots(): List<View> = (synchronized(rows) { rows.keys.toList() } +
         synchronized(mediaInteractors) { mediaInteractors.filterValues { it.get() != null }.keys.toList() }).distinct()
