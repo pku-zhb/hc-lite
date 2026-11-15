@@ -59,6 +59,7 @@ internal data class GlassRuntimeSettings(
     val assistant: Boolean,
     val sidebar: Boolean,
     val unifySidebar: Boolean,
+    val lockscreenMaterial: Boolean,
 ) {
     companion object {
         fun read(p: SharedPreferences) = from(p.all)
@@ -73,6 +74,7 @@ internal data class GlassRuntimeSettings(
                 shade.enabled, values.flag("glass_unify_notifications", false), values.flag("glass_heads_up", false),
                 values.flag("glass_assistant", false), values.flag("glass_sidebar", false),
                 values.flag("glass_sidebar_unify", false),
+                resolved[SettingsMigration.LOCKSCREEN_KEY] as Boolean,
             )
         }
     }

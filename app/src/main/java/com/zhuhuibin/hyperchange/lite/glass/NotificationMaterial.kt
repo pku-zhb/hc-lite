@@ -79,6 +79,9 @@ internal class NotificationMaterial(
         return normalRecipe(context)?.also { keyguardNormalRecipes++ }
     }
 
+    /** Exact registered Duo owners have no native-player lifecycle dependency. */
+    fun ownedNormalRecipe(view: View): FloatArray? = normalRecipe(view.context)
+
     private fun normalRecipe(context: Context): FloatArray? {
         val resource = runCatching {
             val local = context.resources
@@ -105,14 +108,20 @@ internal class NotificationMaterial(
                 val root = native.root(view) ?: return@runCatching null
                 native.lockscreenMaterialContext(root)?.resources ?: return@runCatching null
             } else view.context.createPackageContext("com.android.systemui", 0).resources
-            ArrayList((1..2).map { index ->
-                val color = resources.getIdentifier("notification_element_blend_shade_color_$index", "color", "com.android.systemui")
-                val mode = resources.getIdentifier("notification_element_blend_shade_mode_$index", "integer", "com.android.systemui")
-                check(color != 0 && mode != 0)
-                Point(resources.getColor(color, null), resources.getInteger(mode))
-            })
+            normalBlends(resources)
         }.getOrNull()
     }
+
+    fun ownedNormalBlends(view: View): ArrayList<Point>? = runCatching {
+        normalBlends(view.context.createPackageContext("com.android.systemui", 0).resources)
+    }.getOrNull()
+
+    private fun normalBlends(resources: Resources): ArrayList<Point> = ArrayList((1..2).map { index ->
+        val color = resources.getIdentifier("notification_element_blend_shade_color_$index", "color", "com.android.systemui")
+        val mode = resources.getIdentifier("notification_element_blend_shade_mode_$index", "integer", "com.android.systemui")
+        check(color != 0 && mode != 0)
+        Point(resources.getColor(color, null), resources.getInteger(mode))
+    })
 
     fun installEffects(loader: ClassLoader) {
         if (installedLoaders.put(loader, true) != null) return
