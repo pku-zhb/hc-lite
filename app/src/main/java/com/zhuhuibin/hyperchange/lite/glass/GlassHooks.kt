@@ -3,6 +3,7 @@ package com.zhuhuibin.hyperchange.lite.glass
 
 import android.content.SharedPreferences
 import com.zhuhuibin.hyperchange.lite.HookRuntime
+import com.zhuhuibin.hyperchange.lite.SettingsMigration
 import com.zhuhuibin.hyperchange.lite.scope.NotificationScope
 import com.zhuhuibin.hyperchange.lite.scope.ShadeScope
 
@@ -26,6 +27,10 @@ object GlassHooks {
 
 private class SystemGlass(private val runtime: HookRuntime) {
     @Volatile private var state = GlassRuntimeSettings.read(runtime.preferences)
+    private val hmcOwnedMaterials = HmcOwnedMaterials()
+    private fun hmcPolicy(): HmcMaterialPolicy = state.let {
+        HmcMaterialPolicy(it.glass.enabled, it.notifications, it.lockscreenMaterial, it.unify)
+    }
     private fun notificationPolicy(): NotificationMaterialPolicy = NotificationMaterialPolicy(
         state.notifications, state.media, state.glass.enabled, state.unify,
     )
@@ -68,9 +73,14 @@ private class SystemGlass(private val runtime: HookRuntime) {
                 else -> true
             }
         }, nativeNotificationRefresh = normal::requestRefresh,
-        nativeBackdropWrite = window::observeNativeWrite, ownBackdropWrite = window::ownWrite)
+        nativeBackdropWrite = window::observeNativeWrite, ownBackdropWrite = window::ownWrite,
+        hmcOwnedMaterials = hmcOwnedMaterials,
+        hmcSettingsFor = { bits -> state.glass.copy(enabled = hmcPolicy().tune(bits)) },
+        hmcUnifiedRecipe = { view, bits -> if (hmcPolicy().unify(bits)) normal.ownedNormalRecipe(view) else null },
+        hmcUnifiedBlends = { view, bits -> if (hmcPolicy().unify(bits)) normal.ownedNormalBlends(view) else null })
     private val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
-        if (key == null || key.startsWith("glass_")) {
+        if (key == null || key.startsWith("glass_") || key == SettingsMigration.LOCKSCREEN_KEY ||
+            key == SettingsMigration.VERSION_KEY) {
             val next = GlassRuntimeSettings.read(runtime.preferences)
             // One atomic preset edit can notify several keys with the same full
             // snapshot. Recompute each current root once for that actual change.

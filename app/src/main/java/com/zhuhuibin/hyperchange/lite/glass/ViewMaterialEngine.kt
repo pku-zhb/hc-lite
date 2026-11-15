@@ -31,6 +31,10 @@ internal class ViewMaterialEngine(
     private val nativeNotificationRefresh: ((View, Boolean, () -> Boolean) -> Boolean)? = null,
     private val nativeBackdropWrite: ((View, String) -> BackdropWrite?)? = null,
     private val ownBackdropWrite: ((View, BackdropWrite, Array<Any?>) -> Unit)? = null,
+    private val hmcOwnedMaterials: HmcOwnedMaterials? = null,
+    private val hmcSettingsFor: (Int) -> SoftGlassSettings = { SoftGlassSettings() },
+    private val hmcUnifiedRecipe: (View, Int) -> FloatArray? = { _, _ -> null },
+    private val hmcUnifiedBlends: (View, Int) -> ArrayList<Point>? = { _, _ -> null },
 ) {
     private val backdropWriteChannels = setOf("setMiBackgroundBlurMode", "setMiViewBlurMode", "setMiBackgroundBlurRadius",
         "setMiGlassBlurRadius", "setMiBackgroundBlendColors", "setBackgroundColor", "setMiSelfBlur")
@@ -170,6 +174,19 @@ internal class ViewMaterialEngine(
             runtime.hook(method, "lite-glass:$name") { chain ->
                 val view = chain.thisObject as? View ?: return@hook chain.proceed()
                 if (bypassView.get() === view) return@hook chain.proceed()
+                // Claim before any tuning/range early return. Duo's final commit
+                // then suppresses its player relay even when our tuning is off.
+                val hmc = hmcOwnedMaterials?.claim(view)
+                if (hmc != null) {
+                    forget(view)
+                    if (blendDispatch.get() == true) return@hook chain.proceed()
+                    val input = Array<Any?>(types.size) { chain.getArg(it) }
+                    val output = adjustPrepared(view, method, input, null, null, false, hmc)
+                    val blending = name == "setMiBackgroundBlendColors" || name == "setMiSelfBlur"
+                    if (blending) blendDispatch.set(true)
+                    return@hook try { chain.proceedWith(view, output) }
+                    finally { if (blending) blendDispatch.remove() }
+                }
                 // A replay invokes a native setter with a saved argument. If the
                 // panel closed in a nested callback, passing that argument through
                 // would itself resurrect the old whole-window blur.
@@ -236,7 +253,8 @@ internal class ViewMaterialEngine(
     }
 
     private fun adjustPrepared(view: View, method: Method, input: Array<Any?>, surface: GlassSurface?,
-                               scene: NotificationScopeSnapshot?, recordOwnership: Boolean): Array<Any?> {
+                               scene: NotificationScopeSnapshot?, recordOwnership: Boolean,
+                               hmc: HmcOwnedMaterials.Target? = null): Array<Any?> {
         val name = method.name
         var baseline = copyArgs(input)
         if (name == "setMiGlass") {
@@ -245,7 +263,7 @@ internal class ViewMaterialEngine(
             // Retire the old source as well, or a later settings refresh can
             // replay glass that the current OEM state no longer has.
             if (original == null || !hasSoftGlassRecipe(original)) {
-                if (refreshing.get() != true) synchronized(baselines) {
+                if (hmc == null && refreshing.get() != true) synchronized(baselines) {
                     baselines.getOrPut(view) { linkedMapOf() }[method] = baseline
                     arrayPairs.remove(view)
                     owned.remove(view)
@@ -253,16 +271,16 @@ internal class ViewMaterialEngine(
                 }
                 return input
             }
-            val previous = synchronized(baselines) { arrayPairs[view] }
+            val previous = if (hmc == null) synchronized(baselines) { arrayPairs[view] } else null
             if (original === previous?.second) baseline = arrayOf(previous.first.copyOf())
         }
-        if (refreshing.get() != true) synchronized(baselines) {
+        if (hmc == null && refreshing.get() != true) synchronized(baselines) {
             if (isBackdrop(view)) backdropGenerations[view] = ShadeScope.generation
             baselines.getOrPut(view) { linkedMapOf() }[method] = baseline
             if (scene != null) scopeTokens[view] = scene.token
             if (name == "setMiBackgroundBlendColors") legacyBlends.remove(view)
         }
-        val settings = settingsFor(view)
+        val settings = if (hmc == null) settingsFor(view) else hmcSettingsFor(hmc.state)
         val output: Array<Any?> = when (name) {
             "setMiGlass" -> {
                 val native = baseline[0] as FloatArray
@@ -270,7 +288,8 @@ internal class ViewMaterialEngine(
                 // Preserve it so a later heads-up/theme can reuse its current recipe.
                 if (isBackdrop(view)) arrayOf(native)
                 else {
-                    val selected = unifiedRecipe(view)?.takeIf(::hasSoftGlassRecipe) ?: native
+                    val selected = (if (hmc == null) unifiedRecipe(view) else
+                        hmcUnifiedRecipe(view, hmc.state))?.takeIf(::hasSoftGlassRecipe) ?: native
                     arrayOf(if (settings.enabled) tuneSoftGlass(selected, settings, contextBrightness = contextBrightness(view)) else selected)
                 }
             }
@@ -286,7 +305,8 @@ internal class ViewMaterialEngine(
             "setMiBackgroundBlendColors" -> arrayOf(if (isBackdrop(view))
                 shadePoints(baseline[0], if (settings.enabled) settings.backgroundOpacity else 100,
                     WindowBackdropPolicy.transparent(settings))
-                else points(unifiedBlends(view) ?: baseline[0], opacity(view, settings)))
+                else points((if (hmc == null) unifiedBlends(view) else hmcUnifiedBlends(view, hmc.state))
+                    ?: baseline[0], opacity(view, settings)))
             "setMiSelfBlur" -> arrayOf(
                 if (settings.enabled) softGlassBlur(baseline[0] as Int, settings.backgroundBlur) else baseline[0],
                 shadePoints(baseline[1], if (settings.enabled) settings.backgroundOpacity else 100,
@@ -295,11 +315,11 @@ internal class ViewMaterialEngine(
             "setBackgroundColor" -> arrayOf(if (settings.enabled) softGlassColorAlpha(baseline[0] as Int, settings.backgroundOpacity) else baseline[0])
             else -> baseline
         }
-        if (name == "setMiGlass") synchronized(baselines) {
+        if (hmc == null && name == "setMiGlass") synchronized(baselines) {
             val result = output[0] as? FloatArray
             if (result == null) arrayPairs.remove(view) else arrayPairs[view] = (baseline[0] as FloatArray) to result
         }
-        if (recordOwnership && !sameArgs(input, output)) synchronized(baselines) { owned[view] = Ownership(view) }
+        if (hmc == null && recordOwnership && !sameArgs(input, output)) synchronized(baselines) { owned[view] = Ownership(view) }
         return output
     }
 
@@ -314,6 +334,10 @@ internal class ViewMaterialEngine(
             addBlend = View::class.java.getMethod("addMiBackgroundBlendColor", Int::class.javaPrimitiveType, Int::class.javaPrimitiveType)
             runtime.hook(clearBlend!!, "lite-glass:legacy-clear") { chain ->
                 val view = chain.thisObject as? View
+                if (view != null && hmcOwnedMaterials?.claim(view) != null) {
+                    forget(view)
+                    return@hook chain.proceed()
+                }
                 if (view != null && skipBackdropReplay(view)) { forget(view); return@hook null }
                 if (view != null && blendDispatch.get() != true)
                     runCatching { nativeBackdropWrite?.invoke(view, "clearMiBackgroundBlendColor") }
@@ -331,6 +355,15 @@ internal class ViewMaterialEngine(
             }
             runtime.hook(addBlend!!, "lite-glass:legacy-add") { chain ->
                 val view = chain.thisObject as? View ?: return@hook chain.proceed()
+                val hmc = hmcOwnedMaterials?.claim(view)
+                if (hmc != null) {
+                    forget(view)
+                    if (bypassView.get() === view || blendDispatch.get() == true) return@hook chain.proceed()
+                    val settings = hmcSettingsFor(hmc.state)
+                    return@hook chain.proceedWith(view, arrayOf(
+                        softGlassColorAlpha(chain.getArg(0) as Int, cardBlendOpacity(settings.enabled, false, settings.backgroundOpacity)),
+                        chain.getArg(1)))
+                }
                 if (skipBackdropReplay(view)) { forget(view); return@hook null }
                 val backdropWrite = if (blendDispatch.get() != true)
                     runCatching { nativeBackdropWrite?.invoke(view, "blend-mode:${chain.getArg(1)}") }.getOrNull() else null
@@ -377,6 +410,9 @@ internal class ViewMaterialEngine(
 
     private fun replay(ticket: Long, request: MaterialRefreshPlan.Request) = backdropReplay.duringReplay {
         retireInactiveBackdrops()
+        // Owned pairs have no historical setter baseline. Their callback reads
+        // current native resources/AOD inputs, including a disabled-range release.
+        if (request.notifications && generation.current(ticket, true)) hmcOwnedMaterials?.refresh()
         val (surfaces, legacy) = synchronized(baselines) {
             baselines.map { (view, setters) -> view to setters.toMap() } to
                 legacyBlends.map { it.key to it.value.map { p -> Point(p.x, p.y) } }
