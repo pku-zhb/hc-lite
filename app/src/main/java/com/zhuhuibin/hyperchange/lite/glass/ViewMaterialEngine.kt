@@ -5,6 +5,7 @@ package com.zhuhuibin.hyperchange.lite.glass
 import android.graphics.Point
 import android.os.Handler
 import android.os.Looper
+import android.os.Trace
 import android.view.View
 import android.view.ViewGroup
 import com.zhuhuibin.hyperchange.lite.HookRuntime
@@ -432,18 +433,24 @@ internal class ViewMaterialEngine(
     }
 
     private fun replay(ticket: Long, request: MaterialRefreshPlan.Request) = backdropReplay.duringReplay {
-        retireInactiveBackdrops()
+        val tracing = Trace.isEnabled()
+        refreshStage(tracing, "Lite material retire") { retireInactiveBackdrops() }
         // Owned pairs have no historical setter baseline. Their callback reads
         // current native resources/AOD inputs, including a disabled-range release.
-        if (request.notifications && generation.current(ticket, true)) hmcOwnedMaterials?.refresh()
-        val (surfaces, legacy) = synchronized(baselines) {
-            baselines.map { (view, setters) -> view to setters.toMap() } to
-                legacyBlends.map { it.key to it.value.map { p -> Point(p.x, p.y) } }
+        if (request.notifications && generation.current(ticket, true)) {
+            refreshStage(tracing, "Lite material owned") { hmcOwnedMaterials?.refresh() }
         }
         refreshing.set(true)
         try {
-            val notificationViews = (surfaces.map { it.first } + legacy.map { it.first }).distinct()
-                .filter { nativeNotificationRefresh != null && GlassSurfaces.classify(it) == GlassSurface.NOTIFICATION }
+            val (surfaces, legacy, notificationViews) = refreshStage(tracing, "Lite material collect") {
+                val (surfaces, legacy) = synchronized(baselines) {
+                    baselines.map { (view, setters) -> view to setters.toMap() } to
+                        legacyBlends.map { it.key to it.value.map { p -> Point(p.x, p.y) } }
+                }
+                val notifications = (surfaces.map { it.first } + legacy.map { it.first }).distinct()
+                    .filter { nativeNotificationRefresh != null && GlassSurfaces.classify(it) == GlassSurface.NOTIFICATION }
+                Triple(surfaces, legacy, notifications)
+            }
             notificationViews.forEach { view ->
                 if (!request.notifications) return@forEach
                 if (!generation.current(ticket, true)) return@duringReplay
@@ -486,6 +493,12 @@ internal class ViewMaterialEngine(
                 }
             }
         } finally { refreshing.remove() }
+    }
+
+    private inline fun <T> refreshStage(tracing: Boolean, name: String, action: () -> T): T {
+        if (!tracing) return action()
+        Trace.beginSection(name)
+        return try { action() } finally { Trace.endSection() }
     }
 
     private fun forget(view: View) = synchronized(baselines) {

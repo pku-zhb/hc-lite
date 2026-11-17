@@ -101,7 +101,6 @@ private class SystemGlass(private val runtime: HookRuntime) {
         NotificationScope.addListener { refresh(sceneOnly = true) }
         ShadeScope.addListener {
             engine.retireInactiveBackdrops()
-            engine.scheduleRefresh(sceneOnly = true)
             window.scheduleRefresh()
         }
         runtime.preferences.registerOnSharedPreferenceChangeListener(listener)
