@@ -15,6 +15,7 @@ internal object GlassSurfaces {
     private val mediaRoots = WeakHashMap<View, Boolean>()
     private val windowBackdrops = WeakHashMap<View, Boolean>()
     private val roleAccessors = SurfaceRoleAccessors()
+    private val classTraits = SurfaceClassTraits()
     private val decisions = MaterialCallMemo<View, Facts, Long>()
     private val resourceNames = ResourceNameCache<android.content.res.Resources>()
 
@@ -76,12 +77,9 @@ internal object GlassSurfaces {
 
     /** Unknown or module-owned views fail closed even inside a vendor material call. */
     private fun excludedNow(view: View): Boolean = lineage(view).any { candidate ->
-        val name = candidate.javaClass.name
-        HmcMaterialMembership.contains(candidate.javaClass) ||
-            name.startsWith("com.zhuhuibin.") || name.startsWith("btm.m.") ||
-            name.contains("dynamicisland", true) || name.contains("mediaisland", true) ||
-            name.contains("TimeView") || name.contains("clock", true) ||
-            name.contains("MiuiKeyguardClock") || name.contains("NumPadKey") ||
+        val type = candidate.javaClass
+        HmcMaterialMembership.contains(type) ||
+            classTraits.get(type).excludedByName ||
             id(candidate) in excludedIds
     }
 
@@ -138,19 +136,14 @@ internal object GlassSurfaces {
     private fun mediaNow(view: View): Boolean {
         if (controlCenter(view)) return false
         return lineage(view).any {
-            synchronized(mediaRoots) { mediaRoots.containsKey(it) } || mediaOwner(it.javaClass.name)
+            synchronized(mediaRoots) { mediaRoots.containsKey(it) } || classTraits.get(it.javaClass).mediaOwner
         }
     }
 
-    internal fun mediaOwner(name: String): Boolean =
-        name.startsWith("com.android.systemui.statusbar.notification.mediacontrol.") ||
-            (name.startsWith("com.android.systemui.") &&
-                (name.contains("mediaheader", true) || name.contains("miuimedia", true) || name.contains("mediarow", true)) &&
-                !name.contains("mediaisland", true) && !name.contains("controlcenter", true))
+    internal fun mediaOwner(name: String): Boolean = SurfaceClassTraits.mediaOwner(name)
 
     private fun controlCenter(view: View): Boolean = lineage(view).any {
-        it.javaClass.name.startsWith("miui.systemui.controlcenter.") ||
-            it.javaClass.name.startsWith("com.miui.systemui.controlcenter.")
+        classTraits.get(it.javaClass).controlCenterAncestor
     }
 
     private fun rowNow(view: View): View? = lineage(view).firstOrNull { it.javaClass.name.contains("ExpandableNotificationRow") }
