@@ -15,4 +15,5 @@
 /archive/
 
 # Local agent notes; keep a private copy, never commit it.
-/AGENTS.md
+/AGENTS.local.md
+/hygiene-deny.local.txt
